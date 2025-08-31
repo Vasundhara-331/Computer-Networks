@@ -1,0 +1,132 @@
+Server Side
+
+# include <stdio.h>
+# include <stdlib.h>
+# include <string.h>
+# include <unistd.h>
+# include <time.h>
+# include <arpa/inet.h>
+# include <sys/socket.h>
+# include <sys/types.h>
+
+#define SIZE 100
+#define PORT 8083
+
+int main() {
+	int sockfd;
+	char buffer[SIZE];
+	struct sockaddr_in server, client;
+	socklen_t len;
+	printf("Server\n");
+	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	
+	if(sockfd < 0) {
+		perror("Failed to create socket\n");
+		exit(1);
+	}
+	server.sin_family = AF_INET;
+	server.sin_port = htons(PORT);
+	server.sin_addr.s_addr = inet_addr("127.0.0.1");
+	
+	if(bind(sockfd, (struct sockaddr*)&server, sizeof(server)) < 0) {
+		perror("Bind failed\n");
+		close(sockfd);
+		exit(1);
+	}
+	
+	printf("Connection Established!\n");
+	while(1) {
+		len = sizeof(client);
+		recvfrom(sockfd, buffer, SIZE, 0 , (struct sockaddr*) &client, &len);
+		buffer[strcspn(buffer, "\n")] = 0;
+		printf("Message from client : %s\n", buffer);
+		
+		if(fork() == 0) {
+			time_t rawtime;
+			struct tm *timeinfo;
+			char msg[SIZE];
+			time(&rawtime);
+			timeinfo = localtime(&rawtime);
+			snprintf(msg, SIZE, "Time is: %02d:%02d:%02d", timeinfo -> tm_hour, timeinfo -> tm_min, timeinfo -> tm_sec);
+			sendto(sockfd, msg, strlen(msg), 0, (struct sockaddr*) &client, len);
+			printf("Time sent to client: %02d:%02d:%02d", timeinfo -> tm_hour, timeinfo -> tm_min, timeinfo -> tm_sec);
+			printf("\n");
+		}
+	}
+	close(sockfd);
+	return 0;
+}
+	
+OUTPUT:
+Server
+Connection Established!
+Message from client : Hi
+Time sent to client: 14:02:48
+Message from client : Hello
+Time sent to client: 14:02:52
+Message from client : Client here
+Time sent to client: 14:02:58
+
+
+
+
+Client Side
+
+# include <stdio.h>
+# include <stdlib.h>
+# include <string.h>
+# include <unistd.h>
+# include <time.h>
+# include <arpa/inet.h>
+# include <sys/socket.h>
+# include <sys/types.h>
+
+
+#define SIZE 100
+#define PORT 8083
+
+int main() {
+	int sockfd;
+	char buffer[SIZE];
+	char msg[SIZE];
+	struct sockaddr_in serv;
+	socklen_t len;
+	printf("Client\n");
+	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	
+	if(sockfd < 0) {
+		perror("Failed to create socket\n");
+		exit(1);
+	}
+	serv.sin_family = AF_INET;
+	serv.sin_port = htons(PORT);
+	serv.sin_addr.s_addr = inet_addr("127.0.0.1");
+	
+	printf("Connection Established!\n");
+	while(1) {
+		printf("\nEnter message for server: ");
+		fgets(buffer, SIZE, stdin);
+		buffer[strcspn(buffer, "\n")] = 0;
+		sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr*) &serv, sizeof(serv));
+		
+		len = sizeof(serv);
+		recvfrom(sockfd, msg, SIZE, 0 , (struct sockaddr*) &serv, &len);
+		msg[strcspn(msg, "\n")] = 0;
+		printf("Received from server : %s\n", msg);
+	}
+	close(sockfd); 
+	return 0;
+} 
+	
+OUTPUT:
+Client
+Connection Established!
+
+Enter message for server: Hi
+Received from server : Time is: 14:02:48
+
+Enter message for server: Hello
+Received from server : Time is: 14:02:52
+
+Enter message for server: Client here
+Received from server : Time is: 14:02:58
