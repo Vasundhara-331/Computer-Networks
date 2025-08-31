@@ -1,0 +1,220 @@
+Server Side
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <netinet/in.h>
+
+#define MAX_CLIENTS 10
+#define PORT 50008
+
+int clients[MAX_CLIENTS];
+int count = 0;
+pthread_mutex_t lock;
+
+void *handle_client(void *arg) {
+    int sock = *(int *)arg;
+    free(arg);
+
+    char message[1024], send_buffer[2048];
+    int n;
+
+    while ((n = recv(sock, message, sizeof(message) - 1, 0)) > 0) {
+        message[n] = '\0';
+
+        int sender_index = -1;
+
+        pthread_mutex_lock(&lock);
+        for (int i = 0; i < count; i++) {
+            if (clients[i] == sock) {
+                sender_index = i;
+                break;
+            }
+        }
+
+        if (sender_index != -1) {
+            snprintf(send_buffer, sizeof(send_buffer), "Client %d: %s", sender_index, message);
+
+
+            for (int i = 0; i < count; i++) {
+                if (clients[i] != sock) {
+                    send(clients[i], send_buffer, strlen(send_buffer), 0);
+                }
+            }
+        }
+
+        pthread_mutex_unlock(&lock);
+    }
+
+    //Disconnecting client 
+    close(sock);
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < count; i++) {
+        if (clients[i] == sock) {
+            for (int j = i; j < count - 1; j++) {
+                clients[j] = clients[j + 1];
+            }
+            count--;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&lock);
+
+    printf("Client disconnected\n");
+    pthread_exit(NULL);
+}
+
+int main() {
+    int serverfd, clientfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    pthread_t tid;
+
+    // Create TCP socket
+    serverfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverfd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (bind(serverfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        close(serverfd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(serverfd, MAX_CLIENTS) < 0) {
+        perror("Listen failed");
+        close(serverfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Server started on PORT %d\n", PORT);
+    pthread_mutex_init(&lock, NULL);
+
+    while (1) {
+        clientfd = accept(serverfd, (struct sockaddr *)&client_addr, &client_len);
+        if (clientfd < 0) {
+            perror("Accept failed");
+            continue;
+        }
+
+        pthread_mutex_lock(&lock);
+        if (count >= MAX_CLIENTS) {
+            printf("Max clients reached. Connection refused.\n");
+            close(clientfd);
+        } else {
+            clients[count++] = clientfd;
+
+            int *new_sock = malloc(sizeof(int));
+            *new_sock = clientfd;
+
+            pthread_create(&tid, NULL, handle_client, new_sock);
+            pthread_detach(tid);
+
+            printf("Client %d connected from PORT %d |  IP Address: %s\n", count - 1, ntohs(client_addr.sin_port), inet_ntoa(client_addr.sin_addr));
+        }
+        pthread_mutex_unlock(&lock);
+    }
+
+    close(serverfd);
+    return 0;
+}
+
+OUTPUT:
+Server started on PORT 50008
+Client 0 connected from PORT 57712 |  IP Address: 127.0.0.1
+Client 1 connected from PORT 46244 |  IP Address: 127.0.0.1
+
+
+Client 0
+Connected to server at 127.0.0.1  |   PORT: 50008
+Client 1: Hi
+Hello
+Hai
+Client 1: Hellloooo
+
+Client 1
+Connected to server at 127.0.0.1  |   PORT: 50008
+Hi
+Client 0: Hello
+Client 0: Hai
+Hellloooo
+
+
+Client Side
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <netinet/in.h>
+
+#define PORT 50008
+
+int sock;
+void *receive_message(void *arg) {
+    char buffer[1024];
+    int n;
+
+    while (1) {
+        n = recv(sock, buffer, sizeof(buffer) - 1, 0);
+        if (n <= 0) {
+            printf("Disconnected from server.\n");
+            close(sock);
+            exit(0);
+        }
+        buffer[n] = '\0';
+        printf("%s", buffer);
+    }
+
+    return NULL;
+}
+
+int main() {
+    struct sockaddr_in addr;
+    char msg[1024];
+    pthread_t tid;
+
+    // Socket creation
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(PORT);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    // Connect to server
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("Connection to server failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Connected to server at 127.0.0.1  |   PORT: %d\n", PORT);
+
+    pthread_create(&tid, NULL, receive_message, NULL);
+    pthread_detach(tid);
+
+    while (fgets(msg, sizeof(msg), stdin)) {
+        if (send(sock, msg, strlen(msg), 0) < 0) {
+            perror("Send failed");
+            break;
+        }
+    }
+
+    close(sock);
+    return 0;
+}
